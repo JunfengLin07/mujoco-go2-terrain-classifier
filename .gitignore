@@ -1,4 +1,5 @@
 __pycache__/
 .DS_Store
-*.__pycache__mujoco_menagerie/
+*.pyc
+mujoco_menagerie/
 mujoco_simulation.py
