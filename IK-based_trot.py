@@ -2,11 +2,29 @@ import mujoco
 import math
 import mujoco.viewer
 import numpy as np
+import csv
 
-model = mujoco.MjModel.from_xml_path(
-    '/Users/ethanlin/Desktop/mujoco-go2-terrain-classifier/mujoco_menagerie/unitree_go2/scene.xml'
-)
-data = mujoco.MjData(model)
+def set_terrain(model, terrain_type):
+    floor_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, 'floor')
+    
+    # give floor higher priority so its params dominate the contact
+    model.geom_priority[floor_id] = 1   # feet default to 0
+    
+    if terrain_type == 'hard':
+        model.geom_friction[floor_id] = [1.0, 0.005, 0.0001]
+        model.geom_solref[floor_id] = [0.02, 1.0]
+    elif terrain_type == 'sand':
+        model.geom_friction[floor_id] = [0.15, 0.005, 0.0001]  # very slippery
+        model.geom_solref[floor_id]   = [0.005, 1.0]            # stiff
+
+    elif terrain_type == 'mud':
+        model.geom_friction[floor_id] = [0.8, 0.005, 0.0001]  # sticky
+        model.geom_solref[floor_id]   = [0.1, 1.0]             # moderately soft
+
+    elif terrain_type == 'soft':
+        model.geom_friction[floor_id] = [0.5, 0.005, 0.0001]  # medium
+        model.geom_solref[floor_id]   = [0.4, 1.0]             # very soft
+
 
 def leg_ik(foot_x,foot_z):
 
@@ -21,53 +39,93 @@ def leg_ik(foot_x,foot_z):
 
     return th_an,ca_an
 
-def get_trot_targets(t,yaw_correction=0):
+def get_trot_targets(t):
     A = 0.15
-    freq = 1.2
+    freq = 0.5
     H = 0.28
-    B = 0.04
+    B = [0.07,0.07,0.1,0.1]
     target = np.zeros(12)
-    
-    phases = np.array([0,np.pi,np.pi,0])
-    
+    phases = np.array([np.pi, 0, 0, np.pi])
 
-    yaw = data.qpos[5]
-    #correction = -0.05 * yaw
-    #hip_offsets = [correction,correction,correction,correction]
+    for i in range(4):
+        angle = 2 * np.pi * freq * t + phases[i]
+        if np.sin(angle) > 0:
+            z = -H + B[i] * np.cos(angle)
+        else:
+            z = -H
+        #mjpython IK-based_trot.py
+        #z = -H + B[i] * np.cos(angle)
+        if i == 0 or i == 1:
+            x = -A * np.sin(angle)
+        else:
+            x = -A * np.sin(angle)
 
-    for i in range (4):
-        phase = phases[i]
-        angle = 2*np.pi*freq*t
-        x = - A * np.sin(angle+phase)
-        z = - H + B*np.cos(angle+phase)
-
-        thigh,calf = leg_ik(x,z)
-
-        target[i*3] = 0
+        thigh, calf = leg_ik(x, z)
+        target[i*3]   = 0.0
         target[i*3+1] = thigh
         target[i*3+2] = calf
-    
+
     return target
 
+model = mujoco.MjModel.from_xml_path(
+    '/Users/ethanlin/Desktop/mujoco-go2-terrain-classifier/mujoco_menagerie/unitree_go2/scene.xml'
+)
 
-with mujoco.viewer.launch_passive(model,data) as viewer:
-    while viewer.is_running():
+data = mujoco.MjData(model)
 
-        if int(data.time*500) % 100 == 0:
-            print(f"\nTime: {data.time:.2f}s")
-            print(f"Joint torques: {data.qfrc_actuator[6:18].round(2)}")
-            print(f"Body accel XYZ: {data.qacc[:3].round(3)}")
-            print(f"Body height: {data.qpos[2]:.3f}")
-            
-            quat = data.qpos[3:7]
-            roll  = 2 * math.atan2(quat[1], quat[0])
-            pitch = 2 * math.atan2(quat[2], quat[0])
-            yaw   = 2 * math.atan2(quat[3], quat[0])
-            print(f"Roll:{roll:.3f} Pitch:{pitch:.3f} Yaw:{yaw:.3f}")
+terrains = ['hard','sand','mud','soft']
 
-        targets = get_trot_targets(data.time)
-        kp=40.0
-        kd = 5.0
-        data.ctrl[:] = kp * (targets-data.qpos[7:19]) - kd*( data.qvel[6:18])
-        mujoco.mj_step(model,data)
-        viewer.sync()
+for terrain in terrains:
+    with open(f'sensor_log_{terrain}.csv', 'w', newline='') as f:
+        writer = csv.writer(f)
+
+        # write header row
+        header = ['time', 'terrain']
+        header += [f'torque_{i}' for i in range(12)]
+        header += ['accel_x', 'accel_y', 'accel_z']
+        header += ['height']
+        header += [f'contact_{i}' for i in range(4)]
+        header += ['roll', 'pitch', 'yaw']
+        writer.writerow(header)
+
+        set_terrain(model,terrain)
+
+        floor_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, 'floor')
+
+        tc = 0
+        #with mujoco.viewer.launch_passive(model,data) as viewer:
+            #while viewer.is_running():
+        steps = int(60.0/model.opt.timestep)
+        while tc <= 5000:
+            # log every 10 steps
+            if int(data.time * 500) % 10 == 0:
+                quat = data.qpos[3:7]
+                roll  = 2 * math.atan2(quat[1], quat[0])
+                pitch = 2 * math.atan2(quat[2], quat[0])
+                yaw   = 2 * math.atan2(quat[3], quat[0])
+                
+                # get contact forces
+                contact_forces = np.zeros(4)
+                for i in range(min(data.ncon, 4)):
+                    force = np.zeros(6)
+                    mujoco.mj_contactForce(model, data, i, force)
+                    contact_forces[i] = force[0]
+                
+                # build row
+                row = [data.time, f'{terrain}']
+                row += data.qfrc_actuator[6:18].tolist()
+                row += data.qacc[:3].tolist()
+                row += [data.qpos[2]]
+                row += contact_forces.tolist()  # use contact_forces not cfrc_ext
+                row += [roll, pitch, yaw]
+                writer.writerow(row)
+
+                tc += 1
+
+            targets = get_trot_targets(data.time)
+            kp=40.0
+            kd = 5.0
+            data.ctrl[:] = kp * (targets-data.qpos[7:19]) - kd*( data.qvel[6:18])
+
+            mujoco.mj_step(model,data)
+            #viewer.sync()
