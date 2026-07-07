@@ -3,3 +3,7 @@ __pycache__/
 *.pyc
 mujoco_menagerie/
 mujoco_simulation.py
+sensor_log_hard.csv
+sensor_log_mud.csv
+sensor_log_sand.csv
+sensor_log_soft.csv
