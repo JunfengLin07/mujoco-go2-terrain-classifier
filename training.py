@@ -55,7 +55,7 @@ if __name__ == "__main__":
         # validation
         net.eval()
         val_correct = 0
-        val_total = 1
+        val_total = 0
         with torch.no_grad():
             for x, labels in valLoader:
                 output = net(x)
@@ -66,7 +66,7 @@ if __name__ == "__main__":
         val_acc = 100 * val_correct / val_total
 
         print(f"Epoch{epoch+1}|Loss:{loss.item():.4f} | train acc{train_acc:.1f} | val acc {val_acc:.1f}")
-        
+
     net.eval()
     all_preds = []
     all_labels = []
@@ -87,6 +87,9 @@ if __name__ == "__main__":
     for true in range(4):
         row = [all_preds[i] for i in range(len(all_labels)) if all_labels[i] == true]
         print(f"True {terrain_names[true]}: {Counter(row)}")
+    
+    torch.save(net.state_dict(),'terrain_classifier.pth')
+    print('Model Save')
 
 
         

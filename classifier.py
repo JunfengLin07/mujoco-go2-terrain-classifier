@@ -33,9 +33,11 @@ class TerrainDataset(data.Dataset):
         self.labels = np.array(self.labels)
 
         # normalize
+        """
         mean = self.samples.mean(axis=(0, 1), keepdims=True)
         std  = self.samples.std(axis=(0, 1), keepdims=True) + 1e-8
         self.samples = (self.samples - mean) / std
+        """
 
     def __len__(self):
         return len(self.samples)
@@ -45,6 +47,27 @@ class TerrainDataset(data.Dataset):
         label = torch.LongTensor([self.labels[idx]])[0]
         return feature, label
 
+class ManualNorm(nn.Module):
+    def __init__(self, num_features):
+        super().__init__()
+        self.register_buffer('running_mean', torch.zeros(num_features))
+        self.register_buffer('running_std', torch.ones(num_features))
+        self.momentum = 0.1
+    
+    def forward(self, x):
+        if self.training:
+            mean = x.mean(dim=(0, 2), keepdim=True)
+            std  = x.std(dim=(0, 2), keepdim=True) + 1e-8
+            
+            # detach so updates don't become part of computation graph
+            with torch.no_grad():
+                self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * mean.squeeze()
+                self.running_std  = (1 - self.momentum) * self.running_std  + self.momentum * std.squeeze()
+        else:
+            mean = self.running_mean.view(1, -1, 1)
+            std  = self.running_std.view(1, -1, 1)
+        
+        return (x - mean) / std
 
 class classifier(nn.Module):
     def __init__(self):
@@ -53,31 +76,26 @@ class classifier(nn.Module):
         self.conv2 = nn.Conv1d(64,128,3,stride=1,padding = 1)
         self.conv3 = nn.Conv1d(128,256,3,stride=1,padding = 1)
 
-        #self.bn1 = nn.GroupNorm(8,64)
-        #self.bn2 = nn.GroupNorm(8,128)
-        #self.bn3 = nn.GroupNorm(8,256)
+        self.bn1 = ManualNorm(64)
+        self.bn2 = ManualNorm(128)
+        self.bn3 = ManualNorm(256)
 
         self.pool = nn.AdaptiveAvgPool1d(1)
 
         self.fc1 = nn.Linear(256,4)
         self.relu = nn.ReLU()
 
+
+
     def forward(self,x):
-
-        """
-        x = self.bn1(self.relu(self.conv1(x)))
-        x = self.bn2(self.relu(self.conv2(x)))
-        x = self.bn3(self.relu(self.conv3(x)))
-        """
-
         x = self.conv1(x)
-        #x = self.bn1(x)
+        x = self.bn1(x)
         x = self.relu(x)
         x = self.conv2(x)
-        #x = self.bn2(x)
+        x = self.bn2(x)
         x = self.relu(x)
         x = self.conv3(x)
-        #x = self.bn3(x)
+        x = self.bn3(x)
         x = self.relu(x)
 
         """
@@ -85,14 +103,12 @@ class classifier(nn.Module):
         x = self.relu(self.bn2(self.conv2(x)))
         x = self.relu(self.bn3(self.conv3(x)))
         """
-
         x = self.pool(x)
         x = x.squeeze(-1)
         x = self.fc1(x)
 
         return x
-
-
+    
 
 
 

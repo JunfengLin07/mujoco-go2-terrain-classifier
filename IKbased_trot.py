@@ -39,11 +39,12 @@ def leg_ik(foot_x,foot_z):
 
     return th_an,ca_an
 
-def get_trot_targets(t):
+def get_trot_targets(t,A=0.15,freq=0.5,B=None):
     A = 0.15
     freq = 0.5
     H = 0.28
-    B = [0.07,0.07,0.1,0.1]
+    if B is None:
+        B = [0.07,0.07,0.1,0.1]
     target = np.zeros(12)
     phases = np.array([np.pi, 0, 0, np.pi])
 
@@ -123,7 +124,7 @@ for terrain in terrains:
                 tc += 1
 
             targets = get_trot_targets(data.time)
-            kp=40.0
+            kp = 40.0
             kd = 5.0
             data.ctrl[:] = kp * (targets-data.qpos[7:19]) - kd*( data.qvel[6:18])
 
